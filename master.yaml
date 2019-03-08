@@ -3,7 +3,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: |
 
   This template creates the Root stack which includes all other templates for trillo.
-
   Author: Trillo Team <info@trillo.io>
 
 Metadata:
@@ -82,7 +81,7 @@ Metadata:
       TrilloRtDesiredInstanceCount:
         default: RT Desired Instance Count
       TrilloAlbAcmCertificate:
-        default: ALB Certificate ARN
+        default: ALB Certificate ARN*
 
 Parameters:
 
