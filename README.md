@@ -9,6 +9,9 @@ You can launch this CloudFormation stack in the US East (Ohio) Region in your ac
 
 [![cloudformation-launch-stack](images/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/new?templateURL=https://s3.us-east-2.amazonaws.com/trillo-rt/master.yaml)
 
+## Video Instructions
+[![](http://img.youtube.com/vi/xIod8n7u1Fw/0.jpg)](http://www.youtube.com/watch?v=xIod8n7u1Fw "")
+
 ## 1. Overview
 
 ![infrastructure-overview](images/architecture-overview.png)
