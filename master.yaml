@@ -4,8 +4,7 @@ Description: |
 
   This template creates the Root stack which includes all other templates for trillo.
 
-  Last Modified: 04th July 2018
-  Author: Sowjanya Manne <sowjanya@trillo.io>
+  Author: Trillo Team <info@trillo.io>
 
 Metadata:
 
@@ -218,22 +217,22 @@ Parameters:
     TrilloDsDockerImageTag:
       Description: Trillo DataService Docker image Tag
       Type: String
-      Default: 0.5.0-BUILD-SNAPSHOT_137
+      Default: 0.5.0-BUILD-SNAPSHOT_191
 
     TrilloDsDesiredInstanceCount:
       Description: Trillo DataService instance count
       Type: Number
-      Default: 1
+      Default: 2
 
     TrilloRtDockerImageTag:
       Description: Trillo RT service Docker image Tag
       Type: String
-      Default: 1.0.0-BUILD-SNAPSHOT_335
+      Default: 1.0.0-BUILD-SNAPSHOT_425
 
     TrilloRtDesiredInstanceCount:
       Description: Trillo RT service instance count
       Type: Number
-      Default: 1
+      Default: 2
 
     TrilloAlbAcmCertificate:
       AllowedPattern: ^$|(arn:aws:acm:)([a-z0-9/:-])*([a-z0-9])$
