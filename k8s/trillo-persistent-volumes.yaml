@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trillo-repo-pv
+  namespace: trillo
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: fs-929aa9da.efs.us-east-1.amazonaws.com # NFS server IP
+    path: "/trillo-repo"
+  # force the binding in the right way
+  claimRef:
+    namespace: trillo
+    name: trillo-repo-pvc
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trillo-rt-appdata-pv
+  namespace: trillo
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: fs-929aa9da.efs.us-east-1.amazonaws.com # NFS server IP
+    path: "/trillo-rt-appdata"
+  # force the binding in the right way
+  claimRef:
+    name: trillo-rt-appdata-pvc
+    namespace: trillo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trillo-repo-pvc
+  namespace: trillo
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trillo-rt-appdata-pvc
+  namespace: trillo
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi

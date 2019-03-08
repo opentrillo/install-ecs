@@ -1,0 +1,293 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This template deploys trillo-rt-service, a long running ECS service that needs to connect to trillo-data-service
+  via it's load balancer. We use environment variables to pass the URL of the trillo-data-service.
+
+Parameters:
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+  VPC:
+    Description: The VPC that the ECS cluster is deployed to
+    Type: AWS::EC2::VPC::Id
+
+  Cluster:
+    Description: Please provide the ECS Cluster ID that this service should run on
+    Type: String
+
+  DesiredCount:
+    Description: How many instances of this task should we run across our cluster?
+    Type: Number
+    Default: 1
+
+  DataServiceUrl:
+    Description: The URL of the Data Service
+    Type: String
+
+  PublicListener:
+    Description: The Application Load Balancer public listener to register with
+    Type: String
+
+  PrivateListener:
+    Description: The Application Load Balancer private listener to register with
+    Type: String
+
+  DockerImageTag:
+    Description: Docker image Tag
+    Type: String
+
+Resources:
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: PublicListenerRule
+    Properties:
+      Cluster: !Ref Cluster
+      Role: !Ref ServiceRole
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: "trillo-rt-service"
+          ContainerPort: 8020
+          TargetGroupArn: !Ref TargetGroup
+      # Tags:
+      #     - Key: Name
+      #       Value: !Sub ${EnvironmentName}-EcsService-Rt
+
+  # service-service internal traffic would go through this
+  # This is needed because ECS doesn't support multiple LBs for a service
+  # TODO: remove this when ECS supports multiple ALBs per service.
+  # Ref: - https://forums.aws.amazon.com/message.jspa?messageID=742396
+  #      - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-load-balancing.html
+  PrivateService:
+    Type: AWS::ECS::Service
+    DependsOn: PrivateListenerRule
+    Properties:
+      Cluster: !Ref Cluster
+      Role: !Ref ServiceRole
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: "trillo-rt-service"
+          ContainerPort: 8020
+          TargetGroupArn: !Ref PrivateTargetGroup
+      # Tags:
+      #     - Key: Name
+      #       Value: !Sub ${EnvironmentName}-EcsService-Rt
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: trillo-rt-service
+      TaskRoleArn: !Ref TaskRole
+      Volumes:
+        - Name: trillo-repo
+          Host:
+            SourcePath: "/mnt/efs/trillo-repo/"
+        - Name: trillo-rt-appdata
+          Host:
+            SourcePath: "/mnt/efs/trillo-rt-appdata/"
+      ContainerDefinitions:
+        - Name: trillo-rt-service
+          Essential: true
+          Image: !Sub trillo/trillo-rt:${DockerImageTag}
+          MemoryReservation: 1024
+          Environment:
+            - Name: DATA_SERVICE_URL
+              Value: !Sub https://${DataServiceUrl}
+            - Name: CONTAINER_ORCHESTRATOR
+              Value: ECS
+          PortMappings:
+            - ContainerPort: 8020
+          MountPoints:
+            - ContainerPath: "/trillo-repo"
+              SourceVolume: trillo-repo
+            - ContainerPath: "/trillo-rt-appdata"
+              SourceVolume: trillo-rt-appdata
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+                awslogs-group: !Ref AWS::StackName
+                awslogs-region: !Ref AWS::Region
+    # Tags:
+    #     - Key: Name
+    #       Value: !Sub ${EnvironmentName}-EcsTaskDefinition-Rt
+
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref AWS::StackName
+      RetentionInDays: 14
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      #Name: !Join [ "-", [ !Select [ 2, !Split ["/", !Ref PublicListener]], RT]]
+      VpcId: !Ref VPC
+      Port: 443
+      Protocol: HTTPS
+      Matcher:
+          HttpCode: 200-499
+      HealthCheckIntervalSeconds: 180
+      # HealthCheckPath: /
+      HealthCheckProtocol: HTTPS
+      # HealthCheckTimeoutSeconds: 5
+      # HealthyThresholdCount: 2
+
+  PrivateTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      #Name: !Join [ "-", [ !Select [ 2, !Split ["/", !Ref PrivateListener]], RT]]
+      VpcId: !Ref VPC
+      Port: 443
+      Protocol: HTTPS
+      Matcher:
+          HttpCode: 200-499
+      HealthCheckIntervalSeconds: 180
+      # HealthCheckPath: /
+      HealthCheckProtocol: HTTPS
+      # HealthCheckTimeoutSeconds: 5
+      # HealthyThresholdCount: 2
+
+  PublicListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref PublicListener
+      Priority: 101
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /*
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+
+  PrivateListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref PrivateListener
+      Priority: 101
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /*
+      Actions:
+        - TargetGroupArn: !Ref PrivateTargetGroup
+          Type: forward
+
+  # This IAM Role grants the service access to register/unregister with the
+  # Application Load Balancer (ALB). It is based on the default documented here:
+  # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_IAM_role.html
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ecs-service-rt-${AWS::StackName}
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": [ "ecs.amazonaws.com" ]},
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        }
+      Policies:
+        - PolicyName: !Sub ecs-service-rt-${AWS::StackName}
+          PolicyDocument:
+            {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:AuthorizeSecurityGroupIngress",
+                  "ec2:Describe*",
+                  "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                  "elasticloadbalancing:Describe*",
+                  "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                  "elasticloadbalancing:DeregisterTargets",
+                  "elasticloadbalancing:DescribeTargetGroups",
+                  "elasticloadbalancing:DescribeTargetHealth",
+                  "elasticloadbalancing:RegisterTargets"
+                ],
+                "Resource": "*"
+              }]
+            }
+
+  # This role provides required permissions to deploy a custom micro-service
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ecs-task-rt-${AWS::StackName}
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": [ "ecs-tasks.amazonaws.com" ]},
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        }
+      Policies:
+        - PolicyName: !Sub ecs-task-rt-${AWS::StackName}
+          PolicyDocument:
+            {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "cloudformation:Create*",
+                  "cloudformation:Update*",
+                  "cloudformation:Delete*",
+                  "cloudformation:Describe*",
+                  "cloudformation:Get*",
+                  "cloudformation:List*",
+                  "cloudformation:CancelUpdateStack",
+                  "cloudformation:ContinueUpdateRollback",
+                  "cloudformation:ValidateTemplate",
+                  "cloudformation:EstimateTemplateCost",
+                  "cloudformation:ExecuteChangeSet",
+                  "cloudformation:PreviewStackUpdate",
+                  "cloudformation:SignalResource",
+
+                  "ec2:Describe*",
+                  "ec2:Get*",
+
+                  "ecs:Create*",
+                  "ecs:Delete*",
+                  "ecs:Describe*",
+                  "ecs:Update*",
+                  "ecs:List*",
+                  "ecs:Poll",
+                  "ecs:Register*",
+                  "ecs:Deregister*",
+                  "ecs:RunTask",
+                  "ecs:StartTask",
+                  "ecs:StartTelemetrySession",
+                  "ecs:StopTask",
+                  "ecs:SubmitContainerStateChange",
+                  "ecs:SubmitTaskStateChange",
+
+                  "elasticloadbalancing:Create*",
+                  "elasticloadbalancing:Modify*",
+                  "elasticloadbalancing:Describe*",
+                  "elasticloadbalancing:Delete*",
+                  "elasticloadbalancing:RegisterTargets",
+                  "elasticloadbalancing:DeregisterTargets",
+                  "elasticloadbalancing:AddListenerCertificates",
+                  "elasticloadbalancing:AddTags",
+                  "elasticloadbalancing:RemoveListenerCertificates",
+                  "elasticloadbalancing:RemoveTags",
+                  "elasticloadbalancing:Set*",
+
+                  "cloudwatch:*",
+                  "logs:*",
+                  "iam:*",
+                  "application-autoscaling:*",
+                  "s3:GetObject",
+             ],
+             "Resource": "*"
+         }]
+     }

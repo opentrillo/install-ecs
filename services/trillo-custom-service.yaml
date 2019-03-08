@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This template deploys Trillo Custom Microservice, a long running ECS service that can connect to trillo-data-service
+  via it's load balancer.
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Trillo Custom Microservice Configuration"
+        Parameters:
+          - VPC
+          - PrivateSubnets
+          - PrivateALBSecurityGroup
+          - Cluster
+          - DesiredCount
+          - RTServiceUrl
+          - DockerImage
+          - DockerContainerPort
+
+    ParameterLabels:
+      VPC:
+        default: Select Trillo's VPC
+      PrivateSubnets:
+        default: Select Private Subnets from Trillo's VPC
+      PrivateALBSecurityGroup:
+        default: Select Security Group attached to Trillo Private ALB
+      Cluster:
+        default: Provide Trillo's ECS Cluster
+      DesiredCount:
+        default: Desired no. of container instances
+      RTServiceUrl:
+        default: Trillo RT Service URL (Private ALB URL)
+      DockerImage:
+        default: Docker Image REPOSITORY:TAG
+      DockerContainerPort:
+        default: Docker Container Port
+
+Parameters:
+
+  VPC:
+    Description: Existing VPC that the ECS cluster is deployed to
+    Type: AWS::EC2::VPC::Id
+
+  PrivateSubnets:
+    Description: Choose which subnets the microservice should be deployed to
+    Type: List<AWS::EC2::Subnet::Id>
+
+  PrivateALBSecurityGroup:
+    Description: Select the Security Group to apply to the Application Load Balancer
+    Type: AWS::EC2::SecurityGroup::Id
+
+  Cluster:
+    Description: Please provide the ECS Cluster ID that this service should run on
+    Type: String
+
+  DesiredCount:
+    Description: How many instances of this task should we run across our cluster?
+    Type: Number
+    Default: 1
+
+  RTServiceUrl:
+    Description: The URL of the RT Service
+    Type: String
+
+  DockerImage:
+    Description: Docker image
+    Type: String
+
+  DockerContainerPort:
+    Description: Docker Container internal port
+    Type: String
+
+  TrilloAlbAcmCertificate:
+    AllowedPattern: ^$|(arn:aws:acm:)([a-z0-9/:-])*([a-z0-9])$
+    Description: ACM certificate ARN for the Trillo ALBs - it should be created in the same region
+    Type: String
+
+Resources:
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: ListenerRule
+    Properties:
+      Cluster: !Ref Cluster
+      LaunchType: EC2
+      Role: !Ref ServiceRole
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: !Sub ${AWS::StackName}-trillo-custom-service
+          ContainerPort: !Ref DockerContainerPort
+          TargetGroupArn: !Ref TargetGroup
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-trillo-custom-service
+#      Volumes:
+#        - Name: !Sub ${AWS::StackName} trillo-repo
+#          Host:
+#            SourcePath: "/mnt/efs/trillo-repo/"
+#        - Name: !Sub ${AWS::StackName} trillo-rt-appdata
+#          Host:
+#            SourcePath: "/mnt/efs/trillo-rt-appdata/"
+      ContainerDefinitions:
+        - Name: !Sub ${AWS::StackName}-trillo-custom-service
+          Essential: true
+          Image: !Sub ${DockerImage}
+          Memory: 1024
+          Environment:
+            - Name: RT_SERVICE_URL
+              Value: !Sub https://${RTServiceUrl}
+          PortMappings:
+            - ContainerPort: !Ref DockerContainerPort
+#          MountPoints:
+#            - ContainerPath: "/trillo-repo"
+#              SourceVolume: !Sub ${AWS::StackName} trillo-repo
+#            - ContainerPath: "/trillo-rt-appdata"
+#              SourceVolume: !Sub ${AWS::StackName} trillo-rt-appdata
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+                awslogs-group: !Ref AWS::StackName
+                awslogs-region: !Ref AWS::Region
+
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref AWS::StackName
+      RetentionInDays: 14
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: !Ref DockerContainerPort
+      Protocol: HTTPS
+      Matcher:
+          HttpCode: 200-499
+      HealthCheckIntervalSeconds: 180
+      # HealthCheckPath: /
+      HealthCheckProtocol: HTTPS
+      # HealthCheckTimeoutSeconds: 5
+      # HealthyThresholdCount: 2
+
+  PrivateLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${AWS::StackName}-PrivateLoadBalancer
+      Scheme: internal
+      Subnets: !Ref PrivateSubnets
+      SecurityGroups:
+        - !Ref PrivateALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateLoadBalancer
+
+  DefaultTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-default
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+
+  PrivateALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PrivateLoadBalancer
+      Port: !Ref DockerContainerPort
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-2016-08
+      Certificates:
+        - CertificateArn: !Ref TrilloAlbAcmCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DefaultTargetGroup
+
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref PrivateALBListener
+      Priority: 101
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /*
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+
+  # This IAM Role grants the service access to register/unregister with the
+  # Application Load Balancer (ALB). It is based on the default documented here:
+  # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_IAM_role.html
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ecs-service-rt-${AWS::StackName}
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": [ "ecs.amazonaws.com" ]},
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        }
+      Policies:
+        - PolicyName: !Sub ecs-service-rt-${AWS::StackName}
+          PolicyDocument:
+            {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:AuthorizeSecurityGroupIngress",
+                  "ec2:Describe*",
+                  "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                  "elasticloadbalancing:Describe*",
+                  "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                  "elasticloadbalancing:DeregisterTargets",
+                  "elasticloadbalancing:DescribeTargetGroups",
+                  "elasticloadbalancing:DescribeTargetHealth",
+                  "elasticloadbalancing:RegisterTargets"
+                ],
+                "Resource": "*"
+              }]
+            }
+
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn: Service
+    Properties:
+      MaxCapacity: 20 # TODO remove hardcode
+      MinCapacity: 1
+      ResourceId: !Join ['', [service/, !Ref Cluster, /, !GetAtt [Service, Name]]]
+      RoleARN: !GetAtt [AutoscalingRole, Arn]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  AutoscalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [application-autoscaling.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: !Sub ${AWS::StackName}-custom-service-autoscaling
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action: [
+            'application-autoscaling:*',
+            'cloudwatch:DescribeAlarms',
+            'cloudwatch:PutMetricAlarm',
+            'ecs:DescribeServices',
+            'ecs:UpdateService',
+            'cloudwatch:GetMetricStatistics'
+            ]
+            Resource: '*'
+
+  ServiceAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-rt-service-StepPolicy
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ServiceScalingTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ChangeInCapacity
+        Cooldown: 60
+        MetricAggregationType: Average
+        StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          ScalingAdjustment: 2
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -1
+
+  AutoScalingCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Containers CPU Utilization High
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: '300'
+      EvaluationPeriods: '1'
+      Threshold: '80'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+      - Ref: ServiceAutoScalingPolicy
+      Dimensions:
+      - Name: ServiceName
+        Value:
+          Fn::GetAtt:
+          - Service
+          - Name
+      - Name: ClusterName
+        Value:
+          Ref: Cluster
+
+Outputs:
+
+  CustomServiceLoadBalancerUrl:
+    Description: ALB URL of Trillo Custom Microservice
+    Value: !GetAtt PrivateLoadBalancer.DNSName

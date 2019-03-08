@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: |
+
+  This template creates the Root stack which includes all other templates for trillo.
+
+  Last Modified: 04th July 2018
+  Author: Sowjanya Manne <sowjanya@trillo.io>
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "VPC Configuration"
+        Parameters:
+          - VpcCIDR
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+      - Label:
+          default: "DB Configuration"
+        Parameters:
+          - DBUser
+          - DBPassword
+          - DBAllocatedStorage
+          - DBInstanceClass
+          - DBMultiAZ
+      - Label:
+          default: "ECS Configuration"
+        Parameters:
+          - EcsInstanceType
+          - EcsClusterMaxSize
+          - EcsInstanceKeyName
+          - EcsDockerId
+          - EcsDockerPassword
+      - Label:
+          default: "Trillo Services' Configuration"
+        Parameters:
+          - TrilloDsDockerImageTag
+          - TrilloDsDesiredInstanceCount
+          - TrilloRtDockerImageTag
+          - TrilloRtDesiredInstanceCount
+          - TrilloAlbAcmCertificate
+    ParameterLabels:
+      VpcCIDR:
+        default: VPC CIDR
+      PublicSubnet1CIDR:
+        default: Public Subnet(AZ1) CIDR
+      PublicSubnet2CIDR:
+        default: Public Subnet(AZ2) CIDR
+      PrivateSubnet1CIDR:
+        default: Private Subnet(AZ1) CIDR
+      PrivateSubnet2CIDR:
+        default: Private Subnet(AZ2) CIDR
+      DBUser:
+        default: Admin User*
+      DBPassword:
+        default: Admin User's Password*
+      DBAllocatedStorage:
+        default: Allocated storage size(GB)
+      DBInstanceClass:
+        default: Instance Class
+      DBMultiAZ:
+        default: Multiple AZ DB Instance?
+      EcsInstanceType:
+        default: ECS Instance Type
+      EcsClusterMaxSize:
+        default: ECS Cluster Size
+      EcsInstanceKeyName:
+        default: EC2 Key Pair name for ECS and Bastion Instances
+      EcsDockerId:
+        default: Docker ID*
+      EcsDockerPassword:
+        default: Docker Password*
+      TrilloDsDockerImageTag:
+        default: DS Docker Image TAG
+      TrilloDsDesiredInstanceCount:
+        default: DS Desired Instance Count
+      TrilloRtDockerImageTag:
+        default: RT Docker Image TAG
+      TrilloRtDesiredInstanceCount:
+        default: RT Desired Instance Count
+      TrilloAlbAcmCertificate:
+        default: ALB Certificate ARN
+
+Parameters:
+
+    VpcCIDR:
+      Description: IP range (CIDR notation) for this VPC
+      Type: String
+      Default: 10.180.0.0/16
+
+    PublicSubnet1CIDR:
+      Description: IP range (CIDR notation) for the public subnet in the first Availability Zone
+      Type: String
+      Default: 10.180.8.0/21
+
+    PublicSubnet2CIDR:
+      Description: IP range (CIDR notation) for the public subnet in the second Availability Zone
+      Type: String
+      Default: 10.180.16.0/21
+
+    PrivateSubnet1CIDR:
+      Description: IP range (CIDR notation) for the private subnet in the first Availability Zone
+      Type: String
+      Default: 10.180.24.0/21
+
+    PrivateSubnet2CIDR:
+      Description: IP range (CIDR notation) for the private subnet in the second Availability Zone
+      Type: String
+      Default: 10.180.32.0/21
+
+    DBUser:
+      NoEcho: 'true'
+      Description: The database admin account username (min 6 chars)
+      Type: String
+      MinLength: '6'
+      MaxLength: '16'
+      AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+      ConstraintDescription: must begin with a letter and contain only alphanumeric
+        characters.
+
+    DBPassword:
+      NoEcho: 'true'
+      Description: The database admin account password
+      Type: String
+      MinLength: '6'
+      MaxLength: '41'
+      AllowedPattern: '[a-zA-Z0-9]+'
+      ConstraintDescription: must contain only alphanumeric characters.
+
+    DBAllocatedStorage:
+      Default: '5'
+      Description: The size of the database (Gb)
+      Type: Number
+      MinValue: '5'
+      MaxValue: '1024'
+      ConstraintDescription: must be between 5 and 1024Gb.
+
+    DBInstanceClass:
+      Description: The database instance type
+      Type: String
+      Default: db.t2.small
+      AllowedValues: [db.t1.micro, db.m1.small, db.m1.medium, db.m1.large, db.m1.xlarge,
+        db.m2.xlarge, db.m2.2xlarge, db.m2.4xlarge, db.m3.medium, db.m3.large, db.m3.xlarge,
+        db.m3.2xlarge, db.m4.large, db.m4.xlarge, db.m4.2xlarge, db.m4.4xlarge, db.m4.10xlarge,
+        db.r3.large, db.r3.xlarge, db.r3.2xlarge, db.r3.4xlarge, db.r3.8xlarge, db.m2.xlarge,
+        db.m2.2xlarge, db.m2.4xlarge, db.cr1.8xlarge, db.t2.micro, db.t2.small, db.t2.medium,
+        db.t2.large]
+      ConstraintDescription: must select a valid database instance type.
+
+    DBMultiAZ:
+      Description: Multi-AZ master database?
+      Type: String
+      Default: 'true'
+      AllowedValues: ['true', 'false']
+      ConstraintDescription: must be true or false.
+
+    EcsInstanceType:
+      Description: Which instance type should we use to build the ECS cluster?
+      Type: String
+      # TODO: trim-down this list
+      AllowedValues: [
+        # General purpose
+        t2.nanot2.micro, t2.small, t2.medium, t2.large, t2.xlarge, t2.2xlarge,
+        m3.medium, m3.large, m3.xlarge, m3.2xlarge, m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge, m4.16xlarge,
+        m5.large, m5.xlarge, m5.2xlarge, m5.4xlarge, m5.12xlarge, m5.24xlarge,
+        # Compute optimized
+        c3.large, c3.xlarge, c3.2xlarge, c3.4xlarge, c3.8xlarge,
+        c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge,
+        c5.large, c5.xlarge, c5.2xlarge, c5.4xlarge, c5.9xlarge, c5.18xlarge,
+        # Memory optimized
+        r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge,
+        r4.large, r4.xlarge, r4.2xlarge, r4.4xlarge, r4.8xlarge, r4.16xlarge,
+        x1.16xlarge, x1.32xlarge, x1e.xlarge, x1e.2xlarge, x1e.4xlarge, x1e.8xlarge, x1e.16xlarge, x1e.32xlarge,
+        # Storage optimized
+        d2.xlarge, d2.2xlarge, d2.4xlarge, d2.8xlarge,
+        h1.2xlarge, h1.4xlarge, h1.8xlarge, h1.16xlarge,
+        i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge,
+        i3.large, i3.xlarge, i3.2xlarge, i3.4xlarge, i3.8xlarge, i3.16xlarge,
+        # Accelerated computing
+        f1.2xlarge, f1.16xlarge,
+        g2.2xlarge, g2.8xlarge,
+        g3.4xlarge, g3.8xlarge, g3.16xlarge,
+        p2.xlarge, p2.8xlarge, p2.16xlarge,
+        p3.2xlarge, p3.8xlarge, p3.16xlarge ]
+      Default: m4.large
+
+    EcsClusterMaxSize:
+      Description: Maximum number of ECS Hosts for auto-scaling
+      Type: Number
+      Default: 10
+
+    EcsInstanceKeyName:
+      Description: EC2 key pair name for bastion host SSH access
+      Type: AWS::EC2::KeyPair::KeyName
+      MinLength: 1
+      MaxLength: 255
+      AllowedPattern: "[\\x20-\\x7E]*"
+      ConstraintDescription: Key pair name can contain only ASCII characters.
+
+    EcsDockerId:
+      NoEcho: 'true'
+      Description: Docker ID with access to trillo repository
+      Type: String
+      MinLength: '1'
+      MaxLength: '41'
+
+    EcsDockerPassword:
+      NoEcho: 'true'
+      Description: Docker Password
+      Type: String
+      MinLength: '6'
+      MaxLength: '41'
+
+    TrilloDsDockerImageTag:
+      Description: Trillo DataService Docker image Tag
+      Type: String
+      Default: 0.5.0-BUILD-SNAPSHOT_137
+
+    TrilloDsDesiredInstanceCount:
+      Description: Trillo DataService instance count
+      Type: Number
+      Default: 1
+
+    TrilloRtDockerImageTag:
+      Description: Trillo RT service Docker image Tag
+      Type: String
+      Default: 1.0.0-BUILD-SNAPSHOT_335
+
+    TrilloRtDesiredInstanceCount:
+      Description: Trillo RT service instance count
+      Type: Number
+      Default: 1
+
+    TrilloAlbAcmCertificate:
+      AllowedPattern: ^$|(arn:aws:acm:)([a-z0-9/:-])*([a-z0-9])$
+      Description: ACM certificate ARN for the Trillo ALBs - it should be created in the same region
+      Type: String
+
+Resources:
+
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/vpc.yaml
+      Parameters:
+        EnvironmentName:    !Ref AWS::StackName
+        VpcCIDR:            !Ref VpcCIDR
+        PublicSubnet1CIDR:  !Ref PublicSubnet1CIDR
+        PublicSubnet2CIDR:  !Ref PublicSubnet2CIDR
+        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
+        PrivateSubnet2CIDR: !Ref PrivateSubnet2CIDR
+
+  SecurityGroups:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/security-groups.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VPC: !GetAtt VPC.Outputs.VPC
+        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
+        PrivateSubnet2CIDR: !Ref PrivateSubnet2CIDR
+
+  Database:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/database.yaml
+      Parameters:
+        VPC: !GetAtt VPC.Outputs.VPC
+        PrivateSubnets: !GetAtt VPC.Outputs.PrivateSubnets
+        DBUser: !Ref DBUser
+        DBPassword: !Ref DBPassword
+        DBAllocatedStorage: !Ref DBAllocatedStorage
+        DBInstanceClass: !Ref DBInstanceClass
+        EC2SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+        MultiAZ: !Ref DBMultiAZ
+
+  ALB:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/load-balancers.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VPC: !GetAtt VPC.Outputs.VPC
+        PublicSubnets: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt VPC.Outputs.PrivateSubnets
+        PublicALBSecurityGroup: !GetAtt SecurityGroups.Outputs.PublicALBSecurityGroup
+        PrivateALBSecurityGroup: !GetAtt SecurityGroups.Outputs.PrivateALBSecurityGroup
+        TrilloAlbAcmCertificate: !Ref TrilloAlbAcmCertificate
+
+  ECS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/ecs-cluster.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        InstanceType: !Ref EcsInstanceType
+        ClusterMaxSize: !Ref EcsClusterMaxSize
+        VPC: !GetAtt VPC.Outputs.VPC
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+        Subnets: !GetAtt VPC.Outputs.PrivateSubnets
+        KeyName: !Ref EcsInstanceKeyName
+        DockerId: !Ref EcsDockerId
+        DockerPassword: !Ref EcsDockerPassword
+
+  BASTION:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/infrastructure/bastion.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        PublicSubnet: !GetAtt VPC.Outputs.PublicSubnet1
+        KeyName: !Ref EcsInstanceKeyName
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.BastionSecurityGroup
+
+  TrilloDataService:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/services/trillo-data-service.yaml
+      Parameters:
+        VPC: !GetAtt VPC.Outputs.VPC
+        Cluster: !GetAtt ECS.Outputs.Cluster
+        DesiredCount: !Ref TrilloDsDesiredInstanceCount
+        Listener: !GetAtt ALB.Outputs.PrivateALBListener
+        DockerImageTag: !Ref TrilloDsDockerImageTag
+        DefaultDataServerUsername: !Ref DBUser
+        DefaultDataServerPassword: !Ref DBPassword
+        DefaultDataServerHost: !GetAtt Database.Outputs.MasterEndpointAddress
+
+  TrilloRtService:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/services/trillo-rt-service.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VPC: !GetAtt VPC.Outputs.VPC
+        Cluster: !GetAtt ECS.Outputs.Cluster
+        DesiredCount: !Ref TrilloRtDesiredInstanceCount
+        DataServiceUrl: !Join [ "/", [ !GetAtt ALB.Outputs.PrivateLoadBalancerUrl ]]
+        PublicListener: !GetAtt ALB.Outputs.PublicALBListener
+        PrivateListener: !GetAtt ALB.Outputs.PrivateALBListenerRT
+        DockerImageTag: !Ref TrilloRtDockerImageTag
+
+  TrilloFaaS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-2.amazonaws.com/trillo-rt/services/trillo-functions-service.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VPC: !GetAtt VPC.Outputs.VPC
+        Subnets: !GetAtt VPC.Outputs.PrivateSubnets
+        KeyName: !Ref EcsInstanceKeyName
+        InstanceType: t2.small
+        BastionSecurityGroup: !GetAtt SecurityGroups.Outputs.BastionSecurityGroup
+        ECSHostSecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+        FileSystem: !GetAtt ECS.Outputs.FileSystemID
+
+Outputs:
+
+  TrilloRtServiceUrl:
+    Description: The URL endpoint for the TrilloRt service
+    Value: !Join ["", [ !GetAtt ALB.Outputs.PublicLoadBalancerUrl, "/" ]]

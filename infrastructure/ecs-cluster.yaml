@@ -1,0 +1,330 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+    This template deploys an ECS cluster to the provided VPC and subnets
+    using an Auto Scaling Group
+
+Parameters:
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+  InstanceType:
+    Description: Which instance type should we use to build the ECS cluster?
+    Type: String
+    Default: c4.large
+
+  ClusterMaxSize:
+    Description: Maximum number of ECS Hosts for auto-scaling
+    Type: Number
+    Default: 4
+
+  VPC:
+    Description: Choose which VPC this ECS cluster should be deployed to
+    Type: AWS::EC2::VPC::Id
+
+  Subnets:
+    Description: Choose which subnets this ECS cluster should be deployed to
+    Type: List<AWS::EC2::Subnet::Id>
+
+  SecurityGroup:
+    Description: Select the Security Group to use for the ECS cluster hosts
+    Type: AWS::EC2::SecurityGroup::Id
+
+  KeyName:
+    Description: EC2 key pair name for bastion host SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "[\\x20-\\x7E]*"
+    ConstraintDescription: Key pair name can contain only ASCII characters.
+
+  DockerId:
+    Description: Docker ID (Username) authentication
+    Type: String
+    MinLength: '1'
+    MaxLength: '41'
+
+  DockerPassword:
+    Description: Docker Password for authentication
+    Type: String
+    NoEcho: 'true'
+    MinLength: '6'
+    MaxLength: '41'
+
+Mappings:
+
+    # These are the latest ECS optimized AMIs as of June 2018:
+    #
+    #   amzn-ami-2017.03.f-amazon-ecs-optimized
+    #   ECS agent:    1.18.0
+    #   Docker:       17.12.1-ce
+    #   ecs-init:     1.18.0-1
+    #
+    # You can find the latest available on this page of our documentation:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-optimized_AMI.html
+    # (note the AMI identifier is region specific)
+
+    #TODO: update following AMIs regularly
+    AWSRegionToAMI:
+      us-east-2:
+        AMI: ami-956e52f0
+      us-east-1:
+        AMI: ami-5253c32d
+      us-west-2:
+        AMI: ami-d2f489aa
+      us-west-1:
+        AMI: ami-6b81980b
+      eu-west-3:
+        AMI: ami-ca75c4b7
+      eu-west-2:
+        AMI: ami-3622cf51
+      eu-west-1:
+        AMI: ami-c91624b0
+      eu-central-1:
+        AMI: ami-10e6c8fb
+      ap-northeast-2:
+        AMI: ami-7c69c112
+      ap-northeast-1:
+        AMI: ami-f3f8098c
+      ap-southeast-2:
+        AMI: ami-bc04d5de
+      ap-southeast-1:
+        AMI: ami-b75a6acb
+      ca-central-1:
+        AMI: ami-da6cecbe
+      ap-south-1:
+        AMI: ami-c7072aa8
+      sa-east-1:
+        AMI: ami-a1e2becd
+      us-gov-west-1:
+        AMI: ami-03920462
+
+Resources:
+
+  MountTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Security group for mount target
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-MountTargetSecurityGroup"
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-FileSystem"
+
+  MountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [ 0, !Ref Subnets ]
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [ 1, !Ref Subnets ]
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref EnvironmentName
+
+  ECSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - MountTarget
+      - MountTarget2
+    Properties:
+      VPCZoneIdentifier: !Ref Subnets
+      LaunchConfigurationName: !Ref ECSLaunchConfiguration
+      MinSize: 1
+      MaxSize: !Ref ClusterMaxSize
+      DesiredCapacity: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} ECS host
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT15M
+        SuspendProcesses:
+          - HealthCheck
+          - ReplaceUnhealthy
+          - AZRebalance
+          - AlarmNotification
+          - ScheduledActions
+        WaitOnResourceSignals: true
+
+  ECSLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+          - !Ref SecurityGroup
+      IamInstanceProfile: !Ref ECSInstanceProfile
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+          # ### EFS
+          EC2_AVAIL_ZONE=`curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone`
+          EC2_REGION=${AWS::Region}
+          EFS_FILE_SYSTEM_ID=${FileSystem}
+          DIR_SRC=$EC2_AVAIL_ZONE.$EFS_FILE_SYSTEM_ID.efs.$EC2_REGION.amazonaws.com
+          DIR_TGT=/mnt/efs
+          mkdir /mnt/efs
+          touch /home/ec2-user/echo.res
+          echo $EFS_FILE_SYSTEM_ID >> /home/ec2-user/echo.res
+          echo $EC2_AVAIL_ZONE >> /home/ec2-user/echo.res
+          echo $EC2_REGION >> /home/ec2-user/echo.res
+          echo $DIR_SRC >> /home/ec2-user/echo.res
+          echo $DIR_TGT >> /home/ec2-user/echo.res
+          mount -t nfs4 $DIR_SRC:/ $DIR_TGT >> /home/ec2-user/echo.res
+          cd $DIR_TGT
+          # TODO:
+          # find $DIR_TGT -maxdepth 0 -empty -exec curl -O https://trillo-rv.s3.amazonaws.com/trillo-rv-server.zip \;  -exec unzip trillo-rv-server.zip \;
+          cp -p /etc/fstab /etc/fstab.back-$(date +%F)
+          echo -e "$DIR_SRC:/    $DIR_TGT     nfs     defaults      0    0" | tee -a /etc/fstab
+          service docker stop
+          service docker start
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSAutoScalingGroup
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              nfs-utils: []
+              python27: []
+              unzip: []
+          # commands:
+          #   01_add_instance_to_cluster:
+          #     command: !Sub echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+          files:
+            "/etc/ecs/ecs.config":
+              mode: 000400
+              owner: root
+              group: root
+              content: !Sub |
+                ECS_CLUSTER=${ECSCluster}
+                ECS_ENGINE_AUTH_TYPE=docker
+                ECS_ENGINE_AUTH_DATA={"https://index.docker.io/v1/":{"username":"${DockerId}","password":"${DockerPassword}"}}
+                ECS_ENABLE_CONTAINER_METADATA=true
+            "/etc/cfn/cfn-hup.conf":
+              mode: 000400
+              owner: root
+              group: root
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.ECSLaunchConfiguration.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+
+                services:
+                  sysvinit:
+                    cfn-hup:
+                      enabled: true
+                      ensureRunning: true
+                      files:
+                        - /etc/cfn/cfn-hup.conf
+                            - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+
+    # This IAM Role is attached to all of the ECS hosts. It is based on the default role
+    # published here:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/instance_IAM_role.html
+    #
+    # You can add other IAM policy statements here to allow access from your ECS hosts
+    # to other AWS services. Please note that this role will be used by ALL containers
+    # running on the ECS host.
+
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: !Sub ${EnvironmentName}-ECSRole-${AWS::Region}
+      AssumeRolePolicyDocument: |
+        {
+            "Statement": [{
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "ec2.amazonaws.com"
+                }
+            }]
+        }
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument: |
+            {
+                "Statement": [{
+                    "Effect": "Allow",
+                    "Action": [
+                        "ecs:CreateCluster",
+                        "ecs:DeregisterContainerInstance",
+                        "ecs:DiscoverPollEndpoint",
+                        "ecs:Poll",
+                        "ecs:RegisterContainerInstance",
+                        "ecs:StartTelemetrySession",
+                        "ecs:Submit*",
+                        "logs:CreateLogStream",
+                        "logs:PutLogEvents",
+                        "ecr:BatchCheckLayerAvailability",
+                        "ecr:BatchGetImage",
+                        "ecr:GetDownloadUrlForLayer",
+                        "ecr:GetAuthorizationToken"
+                    ],
+                    "Resource": "*"
+                }]
+            }
+
+  ECSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+          - !Ref ECSRole
+
+Outputs:
+
+  Cluster:
+    Description: A reference to the ECS cluster
+    Value: !Ref ECSCluster
+
+  MountTargetID:
+    Description: Mount target ID
+    Value:
+      Ref: MountTarget
+
+  FileSystemID:
+    Description: File system ID
+    Value:
+      Ref: FileSystem

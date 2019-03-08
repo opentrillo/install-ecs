@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: trillo-ds
+  namespace: trillo
+spec:
+  selector:
+    app: trillo-ds
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8030
+      protocol: TCP
+  type: ClusterIP # Internal
