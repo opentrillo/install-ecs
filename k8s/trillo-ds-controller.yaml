@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: trillo-ds
-          image: trillo/trillo-data-service:0.5.0-BUILD-SNAPSHOT_108
+          image: trillo/trillo-data-service:0.5.0-BUILD-SNAPSHOT_194
           imagePullPolicy: IfNotPresent
           env:
             - name: DEFAULT_DATA_SERVER_TYPE

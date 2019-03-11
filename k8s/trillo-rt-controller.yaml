@@ -17,7 +17,7 @@ spec:
       serviceAccountName: trillo-rt
       containers:
         - name: trillo-rt
-          image: trillo/trillo-rt:1.0.0-BUILD-SNAPSHOT_289
+          image: trillo/trillo-rt:1.0.0-BUILD-SNAPSHOT_429
           imagePullPolicy: IfNotPresent
           env:
             - name: DATA_SERVICE_URL

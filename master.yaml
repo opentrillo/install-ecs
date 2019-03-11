@@ -216,7 +216,7 @@ Parameters:
     TrilloDsDockerImageTag:
       Description: Trillo DataService Docker image Tag
       Type: String
-      Default: 0.5.0-BUILD-SNAPSHOT_191
+      Default: 0.5.0-BUILD-SNAPSHOT_194
 
     TrilloDsDesiredInstanceCount:
       Description: Trillo DataService instance count
@@ -226,7 +226,7 @@ Parameters:
     TrilloRtDockerImageTag:
       Description: Trillo RT service Docker image Tag
       Type: String
-      Default: 1.0.0-BUILD-SNAPSHOT_425
+      Default: 1.0.0-BUILD-SNAPSHOT_429
 
     TrilloRtDesiredInstanceCount:
       Description: Trillo RT service instance count
