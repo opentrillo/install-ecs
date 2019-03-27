@@ -100,6 +100,8 @@ Resources:
               Value: !Sub https://${DataServiceUrl}
             - Name: CONTAINER_ORCHESTRATOR
               Value: ECS
+            - Name: TRILLO_USE_REDIS
+              Value: "false"
           PortMappings:
             - ContainerPort: 8020
           MountPoints:

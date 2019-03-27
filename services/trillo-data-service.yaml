@@ -77,7 +77,8 @@ Resources:
               Value: !Ref DefaultDataServerUsername
             - Name: DEFAULT_DATA_SERVER_PASSWORD
               Value: !Ref DefaultDataServerPassword
-              # TODO:
+            - Name: TRILLO_USE_REDIS
+              Value: "false"
           PortMappings:
             - ContainerPort: 8030
           MountPoints:
