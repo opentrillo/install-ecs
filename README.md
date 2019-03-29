@@ -92,8 +92,6 @@ The templates below are included in this repository:
 - https://aws.amazon.com/blogs/devops/construct-your-own-launch-stack-url
 - https://docs.aws.amazon.com/eks/latest/userguide/getting-started.html
 
-## 5. TODO
+## 5. OpenSource Licenses
 
- - How to create and use domain name on using Route 53?
- - How to create and use certificate using ACM?
- 
+- https://github.com/opentrillo/install-centos
