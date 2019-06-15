@@ -31,7 +31,7 @@ The repository consists of a set of nested templates that deploy the following:
 ## 2. Deployment
 
 Trillo RT AWS CloudFormation stack can be created and Updated using AWS Management Console or AWS CLI and make.
-If you want to work with AWS CLI + make, please take a look at the [Makefile](Makefile) for complete list of customizations.
+If you want to work with AWS CLI + make, please take a look at the Makefile for complete list of customizations.
 
 ### 2.1 How to create the stack?
 
